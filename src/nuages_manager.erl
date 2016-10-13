@@ -18,8 +18,6 @@
 %%
 %% -------------------------------------------------------------------
 
-%% TODO: Change io:format's to lager messages.
-
 -module(nuages_manager).
 -author("Christopher S. Meiklejohn <christopher.meiklejohn@gmail.com>").
 
@@ -40,6 +38,8 @@
 
 -define(DEFAULT_CAPABILITIES, "CAPABILITY_IAM").
 -define(DEFAULT_PUBLIC_SLAVES, 1).
+-define(DEFAULT_OAUTH_ENABLED, false).
+-define(DEFAULT_KEY_NAME, dcos).
 
 -define(REFRESH_INTERVAL, 100).
 -define(REFRESH_MESSAGE, refresh).
@@ -84,8 +84,10 @@ handle_call({provision, StackName, Region},
             _From,
             #state{launched=Launched}=State) ->
     TemplateBody = template(Region),
+    KeyName = ?DEFAULT_KEY_NAME,
     Capabilities = ?DEFAULT_CAPABILITIES,
     PublicSlaves = ?DEFAULT_PUBLIC_SLAVES,
+    OAuthEnabled = ?DEFAULT_OAUTH_ENABLED,
 
     command(
         "aws cloudformation create-stack \\
@@ -94,9 +96,10 @@ handle_call({provision, StackName, Region},
                 --capabilities ~p \\
                 --parameters \\
                     ParameterKey=KeyName,ParameterValue=~p \\
+                    ParameterKey=OAuthEnabled,ParameterValue=~p \\
                     ParameterKey=PublicSlaveInstanceCount,ParameterValue=~p \\
                     ParameterKey=SlaveInstanceCount,ParameterValue=0",
-           [StackName, TemplateBody, Capabilities, StackName, PublicSlaves]),
+           [StackName, TemplateBody, Capabilities, KeyName, OAuthEnabled, PublicSlaves]),
 
     %% Wait for cluster to be completed.
     wait(StackName, 'stack-create-complete'),
@@ -133,7 +136,7 @@ handle_info(?REFRESH_MESSAGE, State) ->
 
 handle_info({event, StackName, 'stack-create-complete'=Event},
             #state{running=Running0}=State) ->
-    io:format("Event ~p received for ~p~n", [Event, StackName]),
+    log("Event ~p received for ~p~n", [Event, StackName]),
 
     Output = command("aws cloudformation describe-stacks --stack-name ~p",
                      [StackName]),
@@ -174,9 +177,9 @@ template('us-west-2') ->
 %% @private
 command(String, Args) ->
     Command = io_lib:format(String, Args),
-    io:format("Executing: ~s~n", [Command]),
+    log("Executing: ~s~n", [Command]),
     Output = os:cmd(Command),
-    io:format("Output: ~s~n", [Output]),
+    log("Output: ~s~n", [Output]),
     Output.
 
 %% @private
@@ -193,3 +196,6 @@ wait(StackName, Event) ->
                 Self ! {event, StackName, Event}
           end).
 
+%% @private
+log(Message, Args) ->
+    io:format(Message, Args).
