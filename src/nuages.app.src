@@ -1,0 +1,13 @@
+{application, nuages,
+ [
+  {description, "Cloud computing orchestration."},
+  {vsn, "0.0.1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  crypto
+                 ]},
+  {mod, {nuages_app, []}},
+  {modules, []}
+ ]}.
