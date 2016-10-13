@@ -34,5 +34,6 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    Children = lists:flatten([?CHILD(nuages_manager, worker)]),
     RestartStrategy = {one_for_one, 10, 10},
-    {ok, {RestartStrategy, []}}.
+    {ok, {RestartStrategy, Children}}.
