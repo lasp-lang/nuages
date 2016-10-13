@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nuages_manager).
+-module(nuages_cloudformation_manager).
 -author("Christopher S. Meiklejohn <christopher.meiklejohn@gmail.com>").
 
 -behaviour(gen_server).
