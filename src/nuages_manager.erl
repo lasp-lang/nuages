@@ -18,6 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
+%% TODO: Change io:format's to lager messages.
+
 -module(nuages_manager).
 -author("Christopher S. Meiklejohn <christopher.meiklejohn@gmail.com>").
 
@@ -39,7 +41,10 @@
 -define(DEFAULT_CAPABILITIES, "CAPABILITY_IAM").
 -define(DEFAULT_PUBLIC_SLAVES, 1).
 
--record(state, {running=[], launched=[]}).
+-define(REFRESH_INTERVAL, 100).
+-define(REFRESH_MESSAGE, refresh).
+
+-record(state, {running, launched}).
 
 %%%===================================================================
 %%% API
@@ -65,7 +70,12 @@ deprovision(StackName) ->
 %% @private
 -spec init([]) -> {ok, #state{}}.
 init([]) ->
-    {ok, #state{}}.
+    schedule_refresh(),
+
+    Running = dict:new(),
+    Launched = [],
+
+    {ok, #state{running=Running, launched=Launched}}.
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
@@ -88,6 +98,9 @@ handle_call({provision, StackName, Region},
                     ParameterKey=SlaveInstanceCount,ParameterValue=0",
            [StackName, TemplateBody, Capabilities, StackName, PublicSlaves]),
 
+    %% Wait for cluster to be completed.
+    wait(StackName, 'stack-create-complete'),
+
     {reply, ok, State#state{launched=Launched ++ [StackName]}};
 
 handle_call({deprovision, StackName},
@@ -97,7 +110,7 @@ handle_call({deprovision, StackName},
     command("aws cloudformation delete-stack -stack-name ~s",
             [StackName]),
 
-    Running = lists:delete(StackName, Running0),
+    Running = dict:erase(StackName, Running0),
     Launched = lists:delete(StackName, Launched0),
 
     {reply, ok, State#state{running=Running, launched=Launched}};
@@ -114,6 +127,27 @@ handle_cast(Msg, State) ->
 
 %% @private
 -spec handle_info(term(), #state{}) -> {noreply, #state{}}.
+handle_info(?REFRESH_MESSAGE, State) ->
+    schedule_refresh(),
+    {noreply, State};
+
+handle_info({event, StackName, 'stack-create-complete'=Event},
+            #state{running=Running0}=State) ->
+    io:format("Event ~p received for ~p~n", [Event, StackName]),
+
+    Output = command("aws cloudformation describe-stacks --stack-name ~p",
+                     [StackName]),
+
+    Running = try
+                Config = jsx:decode(list_to_binary(Output), [return_maps]),
+                dict:store(StackName, Config, Running0)
+              catch
+                  _:_ ->
+                      Running0
+              end,
+
+    {noreply, State#state{running=Running}};
+
 handle_info(Msg, State) ->
     lager:warning("Unhandled messages: ~p", [Msg]),
     {noreply, State}.
@@ -143,4 +177,19 @@ command(String, Args) ->
     io:format("Executing: ~s~n", [Command]),
     Output = os:cmd(Command),
     io:format("Output: ~s~n", [Output]),
-    ok.
+    Output.
+
+%% @private
+schedule_refresh() ->
+    erlang:send_after(?REFRESH_INTERVAL, self(), ?REFRESH_MESSAGE).
+
+%% @private
+%% TODO: check the return condition.
+wait(StackName, Event) ->
+    Self = self(),
+    spawn(fun() ->
+                command("aws cloudformation wait ~s --stack-name ~s",
+                        [Event, StackName]),
+                Self ! {event, StackName, Event}
+          end).
+
