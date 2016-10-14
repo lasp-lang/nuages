@@ -26,7 +26,8 @@
 %% API.
 -export([start_link/0,
          provision/2,
-         deprovision/1]).
+         deprovision/1,
+         deploy/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -63,6 +64,10 @@ provision(StackName, Region) ->
 deprovision(StackName) ->
     gen_server:call(?MODULE, {deprovision, StackName}, infinity).
 
+%% @doc Deploy an application.
+deploy(Application) ->
+    gen_server:call(?MODULE, {deploy, Application}, infinity).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -80,6 +85,16 @@ init([]) ->
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}}.
+handle_call({deploy, _Application},
+            _From,
+            State) ->
+
+    Specification = application_specification(lasp),
+    EncodedSpec = jsx:encode(Specification),
+    log(EncodedSpec, []),
+
+    {reply, ok, State};
+
 handle_call({provision, StackName, Region},
             _From,
             #state{launched=Launched}=State) ->
@@ -199,3 +214,71 @@ wait(StackName, Event) ->
 %% @private
 log(Message, Args) ->
     io:format(Message, Args).
+
+%% @private
+application_specification(lasp) ->
+    Identifier = "lasp",
+    Cpu = 1,
+    Memory = 1024,
+    NumInstances = 1,
+    DockerImage = "cmeiklejohn/lasp-dev",
+    NumPorts = 2,
+    Environment = #{},
+
+    specification(Identifier,
+                  Cpu,
+                  Memory,
+                  NumInstances,
+                  DockerImage,
+                  NumPorts,
+                  Environment).
+
+%% @private
+specification(Identifier,
+              Cpu,
+              Memory,
+              NumInstances,
+              DockerImage,
+              NumPorts,
+              Environment) ->
+    #{
+    wrap("acceptedResourceRoles") => [wrap("slave_public")],
+    wrap("id") => wrap(Identifier),
+    wrap("dependencies") => [],
+    wrap("cpus") => Cpu,
+    wrap("mem") => Memory,
+    wrap("instances") => NumInstances,
+    wrap("container") => #{
+      wrap("type") => wrap("DOCKER"),
+      wrap("docker") => #{
+        wrap("image") => wrap(DockerImage),
+        wrap("network") => wrap("HOST"),
+        wrap("forcePullImage") => true,
+        wrap("parameters") => [
+          #{ wrap("key") => wrap("oom-kill-disable"),
+             wrap("value") => true }
+        ]
+       }
+    },
+    wrap("ports") => ports(NumPorts),
+    wrap("env") => Environment,
+    wrap("healthChecks") => [
+       #{
+        wrap("path") => wrap("/api/health"),
+        wrap("portIndex") => 0,
+        wrap("protocol") => wrap("HTTP"),
+        wrap("gracePeriodSeconds") => 300,
+        wrap("intervalSeconds") => 60,
+        wrap("timeoutSeconds") => 20,
+        wrap("maxConsecutiveFailures") => 3,
+        wrap("ignoreHttp1xx") => false
+      }]
+    }.
+
+%% @private
+ports(NumPorts) ->
+    lists:map(fun(_) -> 0 end, lists:seq(1, NumPorts)).
+
+%% @private
+wrap(Term) ->
+    list_to_binary(Term).
