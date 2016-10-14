@@ -87,11 +87,18 @@ init([]) ->
     {reply, term(), #state{}}.
 handle_call({deploy, _Application},
             _From,
-            State) ->
+            #state{running=Running}=State) ->
 
-    Specification = application_specification(lasp),
+    %% Get application specification.
+    {Identifier, Specification} = application_specification(lasp),
     EncodedSpec = jsx:encode(Specification),
+
     log(EncodedSpec, []),
+
+    %% Execute deployment code.
+    lists:foreach(fun({_StackName, Configuration}) ->
+                        deploy_to_stack(Identifier, Configuration, EncodedSpec)
+                  end, dict:to_list(Running)),
 
     {reply, ok, State};
 
@@ -225,13 +232,14 @@ application_specification(lasp) ->
     NumPorts = 2,
     Environment = #{},
 
-    specification(Identifier,
-                  Cpu,
-                  Memory,
-                  NumInstances,
-                  DockerImage,
-                  NumPorts,
-                  Environment).
+    {Identifier,
+     specification(Identifier,
+                   Cpu,
+                   Memory,
+                   NumInstances,
+                   DockerImage,
+                   NumPorts,
+                   Environment)}.
 
 %% @private
 specification(Identifier,
@@ -256,7 +264,7 @@ specification(Identifier,
         wrap("forcePullImage") => true,
         wrap("parameters") => [
           #{ wrap("key") => wrap("oom-kill-disable"),
-             wrap("value") => true }
+             wrap("value") => wrap("true") }
         ]
        }
     },
@@ -282,3 +290,36 @@ ports(NumPorts) ->
 %% @private
 wrap(Term) ->
     list_to_binary(Term).
+
+%% @private
+deploy_to_stack(Identifier, Configuration, Specification) ->
+    %% Get the endpoint from the cluster configuraiton.
+    #{<<"Stacks">> := [Stack]} = Configuration,
+    #{<<"Outputs">> := Outputs} = Stack,
+    Mesos = lists:foldl(fun(#{<<"OutputKey">> := OutputKey,
+                      <<"OutputValue">> := OutputValue},
+                    DnsAddress) ->
+                        case OutputKey of
+                            <<"DnsAddress">> ->
+                                OutputValue;
+                            _ ->
+                                DnsAddress
+                        end
+                end, undefined, Outputs),
+    log("~p~n", [Mesos]),
+
+    %% Write the configuration to a temporary file.
+    Filename = "/tmp/configuration.json",
+    ok = file:write_file(Filename, Specification),
+
+    %% Remove the application first.
+    command("curl -k -H 'Content-type: application/json' \\
+                  -X DELETE ~s/service/marathon/v2/apps/~s",
+            [Mesos, Identifier]),
+
+    %% Deploy the application.
+    command("curl -k -H 'Content-type: application/json' \\
+                  -X POST -d @~s ~s/service/marathon/v2/apps?force=true",
+            [Filename, Mesos]),
+
+    ok.
