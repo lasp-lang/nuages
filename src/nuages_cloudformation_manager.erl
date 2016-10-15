@@ -26,7 +26,7 @@
 %% API.
 -export([start_link/0,
          provision/2,
-         deprovision/1,
+         deprovision/2,
          deploy/1]).
 
 %% gen_server callbacks
@@ -46,6 +46,7 @@
 -define(REFRESH_MESSAGE, refresh).
 
 -record(state, {running, launched}).
+-record(deployment, {region, configuration}).
 
 %%%===================================================================
 %%% API
@@ -61,8 +62,8 @@ provision(StackName, Region) ->
     gen_server:call(?MODULE, {provision, StackName, Region}, infinity).
 
 %% @doc Deprovision a stack.
-deprovision(StackName) ->
-    gen_server:call(?MODULE, {deprovision, StackName}, infinity).
+deprovision(StackName, Region) ->
+    gen_server:call(?MODULE, {deprovision, StackName, Region}, infinity).
 
 %% @doc Deploy an application.
 deploy(Application) ->
@@ -96,7 +97,7 @@ handle_call({deploy, _Application},
     log(EncodedSpec, []),
 
     %% Execute deployment code.
-    lists:foreach(fun({_StackName, Configuration}) ->
+    lists:foreach(fun({_StackName, #deployment{configuration=Configuration}}) ->
                         deploy_to_stack(Identifier, Configuration, EncodedSpec)
                   end, dict:to_list(Running)),
 
@@ -112,7 +113,7 @@ handle_call({provision, StackName, Region},
     OAuthEnabled = ?DEFAULT_OAUTH_ENABLED,
 
     command(
-        "aws cloudformation create-stack \\
+        "aws --region ~p cloudformation create-stack \\
                 --stack-name ~s \\
                 --template-body ~p \\
                 --capabilities ~p \\
@@ -121,19 +122,19 @@ handle_call({provision, StackName, Region},
                     ParameterKey=OAuthEnabled,ParameterValue=~p \\
                     ParameterKey=PublicSlaveInstanceCount,ParameterValue=~p \\
                     ParameterKey=SlaveInstanceCount,ParameterValue=0",
-           [StackName, TemplateBody, Capabilities, KeyName, OAuthEnabled, PublicSlaves]),
+           [Region, StackName, TemplateBody, Capabilities, KeyName, OAuthEnabled, PublicSlaves]),
 
     %% Wait for cluster to be completed.
-    wait(StackName, 'stack-create-complete'),
+    wait(StackName, Region, 'stack-create-complete'),
 
     {reply, ok, State#state{launched=Launched ++ [StackName]}};
 
-handle_call({deprovision, StackName},
+handle_call({deprovision, StackName, Region},
             _From,
             #state{running=Running0, launched=Launched0}=State) ->
 
-    command("aws cloudformation delete-stack -stack-name ~s",
-            [StackName]),
+    command("aws --region ~p cloudformation delete-stack -stack-name ~s",
+            [Region, StackName]),
 
     Running = dict:erase(StackName, Running0),
     Launched = lists:delete(StackName, Launched0),
@@ -156,16 +157,19 @@ handle_info(?REFRESH_MESSAGE, State) ->
     schedule_refresh(),
     {noreply, State};
 
-handle_info({event, StackName, 'stack-create-complete'=Event},
+handle_info({event, StackName, Region, 'stack-create-complete'=Event},
             #state{running=Running0}=State) ->
     log("Event ~p received for ~p~n", [Event, StackName]),
 
-    Output = command("aws cloudformation describe-stacks --stack-name ~p",
-                     [StackName]),
+    Output = command("aws --region ~p cloudformation describe-stacks --stack-name ~p",
+                     [Region, StackName]),
 
     Running = try
-                Config = jsx:decode(list_to_binary(Output), [return_maps]),
-                dict:store(StackName, Config, Running0)
+                Configuration = jsx:decode(list_to_binary(Output), [return_maps]),
+                dict:store(StackName,
+                           #deployment{region=Region,
+                                       configuration=Configuration},
+                           Running0)
               catch
                   _:_ ->
                       Running0
@@ -193,8 +197,26 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 %% @private
+template('us-west-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
 template('us-west-2') ->
-    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e64024af95b62c632c90b9063ed06296fcf38ea5/cloudformation/multi-master.cloudformation.json".
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e64024af95b62c632c90b9063ed06296fcf38ea5/cloudformation/multi-master.cloudformation.json";
+template('us-east-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('sa-east-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('eu-west-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('eu-central-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('ap-northeast-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('ap-southeast-1') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template('ap-southeast-2') ->
+    "https://s3-us-west-2.amazonaws.com/downloads.dcos.io/dcos/stable/commit/e665123df0dbb19adacaefe47d16a3de144d5733/cloudformation/multi-master.cloudformation.json";
+template(_) ->
+    undefined.
 
 %% @private
 command(String, Args) ->
@@ -210,12 +232,12 @@ schedule_refresh() ->
 
 %% @private
 %% TODO: check the return condition.
-wait(StackName, Event) ->
+wait(StackName, Region, Event) ->
     Self = self(),
     spawn(fun() ->
-                command("aws cloudformation wait ~s --stack-name ~s",
-                        [Event, StackName]),
-                Self ! {event, StackName, Event}
+                command("aws --region ~p cloudformation wait ~s --stack-name ~s",
+                        [Region, Event, StackName]),
+                Self ! {event, StackName, Region, Event}
           end).
 
 %% @private
@@ -230,7 +252,37 @@ application_specification(lasp) ->
     NumInstances = 1,
     DockerImage = "cmeiklejohn/lasp-dev",
     NumPorts = 2,
-    Environment = #{},
+
+    Environment = #{
+        wrap("LASP_BRANCH") => env_wrap("$LASP_BRANCH"),
+        wrap("AD_COUNTER_SIM_SERVER") => env_wrap("true"),
+        wrap("DCOS") => env_wrap("$DCOS"),
+        wrap("TOKEN") => env_wrap("$TOKEN"),
+        wrap("PEER_SERVICE") => env_wrap("$PEER_SERVICE"),
+        wrap("MODE") => env_wrap("$MODE"),
+        wrap("BROADCAST") => env_wrap("$BROADCAST"),
+        wrap("SIMULATION") => env_wrap("$SIMULATION"),
+        wrap("EVAL_ID") => env_wrap("$EVAL_ID"),
+        wrap("EVAL_TIMESTAMP") => env_wrap("$EVAL_TIMESTAMP"),
+        wrap("CLIENT_NUMBER") => env_wrap("$CLIENT_NUMBER"),
+        wrap("HEAVY_CLIENTS") => env_wrap("$HEAVY_CLIENTS"),
+        wrap("REACTIVE_SERVER") => env_wrap("$REACTIVE_SERVER"),
+        wrap("PARTITION_PROBABILITY") => env_wrap("$PARTITION_PROBABILITY"),
+        wrap("IMPRESSION_VELOCITY") => env_wrap("$IMPRESSION_VELOCITY"),
+        wrap("AAE_INTERVAL") => env_wrap("$AAE_INTERVAL"),
+        wrap("DELTA_INTERVAL") => env_wrap("$DELTA_INTERVAL"),
+        wrap("INSTRUMENTATION") => env_wrap("$INSTRUMENTATION"),
+        wrap("LOGS") => env_wrap("$LOGS"),
+        wrap("EXTENDED_LOGGING") => env_wrap("$EXTENDED_LOGGING"),
+        wrap("MAILBOX_LOGGING") => env_wrap("$MAILBOX_LOGGING"),
+        wrap("AWS_ACCESS_KEY_ID") => env_wrap("$AWS_ACCESS_KEY_ID"),
+        wrap("AWS_SECRET_ACCESS_KEY") => env_wrap("$AWS_SECRET_ACCESS_KEY")
+    },
+
+    Labels = #{
+        wrap("HAPROXY_GROUP") => wrap("external"),
+        wrap("HAPROXY_0_VHOST") => env_wrap("$ELB_HOST")
+    },
 
     {Identifier,
      specification(Identifier,
@@ -239,7 +291,8 @@ application_specification(lasp) ->
                    NumInstances,
                    DockerImage,
                    NumPorts,
-                   Environment)}.
+                   Environment,
+                   Labels)}.
 
 %% @private
 specification(Identifier,
@@ -248,39 +301,41 @@ specification(Identifier,
               NumInstances,
               DockerImage,
               NumPorts,
-              Environment) ->
+              Environment,
+              Labels) ->
     #{
-    wrap("acceptedResourceRoles") => [wrap("slave_public")],
-    wrap("id") => wrap(Identifier),
-    wrap("dependencies") => [],
-    wrap("cpus") => Cpu,
-    wrap("mem") => Memory,
-    wrap("instances") => NumInstances,
-    wrap("container") => #{
-      wrap("type") => wrap("DOCKER"),
-      wrap("docker") => #{
-        wrap("image") => wrap(DockerImage),
-        wrap("network") => wrap("HOST"),
-        wrap("forcePullImage") => true,
-        wrap("parameters") => [
-          #{ wrap("key") => wrap("oom-kill-disable"),
-             wrap("value") => wrap("true") }
-        ]
-       }
-    },
-    wrap("ports") => ports(NumPorts),
-    wrap("env") => Environment,
-    wrap("healthChecks") => [
-       #{
-        wrap("path") => wrap("/api/health"),
-        wrap("portIndex") => 0,
-        wrap("protocol") => wrap("HTTP"),
-        wrap("gracePeriodSeconds") => 300,
-        wrap("intervalSeconds") => 60,
-        wrap("timeoutSeconds") => 20,
-        wrap("maxConsecutiveFailures") => 3,
-        wrap("ignoreHttp1xx") => false
-      }]
+        wrap("acceptedResourceRoles") => [wrap("slave_public")],
+        wrap("id") => wrap(Identifier),
+        wrap("dependencies") => [],
+        wrap("cpus") => Cpu,
+        wrap("mem") => Memory,
+        wrap("instances") => NumInstances,
+        wrap("container") => #{
+          wrap("type") => wrap("DOCKER"),
+          wrap("docker") => #{
+            wrap("image") => wrap(DockerImage),
+            wrap("network") => wrap("HOST"),
+            wrap("forcePullImage") => true,
+            wrap("parameters") => [
+              #{ wrap("key") => wrap("oom-kill-disable"),
+                 wrap("value") => wrap("true") }
+            ]
+           }
+        },
+        wrap("ports") => ports(NumPorts),
+        wrap("env") => Environment,
+        wrap("labels") => Labels,
+        wrap("healthChecks") => [
+           #{
+            wrap("path") => wrap("/api/health"),
+            wrap("portIndex") => 0,
+            wrap("protocol") => wrap("HTTP"),
+            wrap("gracePeriodSeconds") => 300,
+            wrap("intervalSeconds") => 60,
+            wrap("timeoutSeconds") => 20,
+            wrap("maxConsecutiveFailures") => 3,
+            wrap("ignoreHttp1xx") => false
+          }]
     }.
 
 %% @private
@@ -323,3 +378,13 @@ deploy_to_stack(Identifier, Configuration, Specification) ->
             [Filename, Mesos]),
 
     ok.
+
+%% @private
+env_wrap(Term) ->
+    V = case os:getenv(Term) of
+        false ->
+            "false";
+        Value ->
+            Value
+    end,
+    list_to_binary(V).
