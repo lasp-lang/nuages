@@ -6,7 +6,10 @@
   {applications, [
                   kernel,
                   stdlib,
-                  crypto
+                  crypto,
+                  sasl,
+                  lager,
+                  os_mon
                  ]},
   {mod, {nuages_app, []}},
   {modules, []}
