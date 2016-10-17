@@ -1,3 +1,4 @@
+%% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2016 Christopher Meiklejohn.  All Rights Reserved.
 %%
@@ -23,6 +24,13 @@
 -export([start/0,
          stop/0]).
 
+%% API.
+-export([provision/2,
+         deprovision/2,
+         deploy/2]).
+
+-define(MANAGER, nuages_cloudformation_manager).
+
 %% @doc Start the application.
 start() ->
     application:ensure_all_started(nuages).
@@ -30,3 +38,19 @@ start() ->
 %% @doc Stop the application.
 stop() ->
     application:stop(nuages).
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+%% @doc Provision a stack.
+provision(StackName, Region) ->
+    ?MANAGER:provision(StackName, Region).
+
+%% @doc Deprovision a stack.
+deprovision(StackName, Region) ->
+    ?MANAGER:deprovision(StackName, Region).
+
+%% @doc Deploy an application.
+deploy(Identifier, Application) ->
+    ?MANAGER:deploy(Identifier, Application).
