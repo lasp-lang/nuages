@@ -9,9 +9,3 @@
 
 ## Enable multi_time_warp
 +C multi_time_warp
-
-## Hidden nodes
--hidden
-
-## Explicit connections only.
--connect_all false
