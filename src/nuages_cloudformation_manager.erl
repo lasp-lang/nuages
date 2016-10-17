@@ -252,11 +252,11 @@ log(Message, Args) ->
     lager:info(Message, Args).
 
 %% @private
-deploy_to_stack(Identifier, Configuration, Specification) ->
+dcos(Configuration) ->
     %% Get the endpoint from the cluster configuraiton.
     #{<<"Stacks">> := [Stack]} = Configuration,
     #{<<"Outputs">> := Outputs} = Stack,
-    Mesos = lists:foldl(fun(#{<<"OutputKey">> := OutputKey,
+    lists:foldl(fun(#{<<"OutputKey">> := OutputKey,
                       <<"OutputValue">> := OutputValue},
                     DnsAddress) ->
                         case OutputKey of
@@ -265,21 +265,27 @@ deploy_to_stack(Identifier, Configuration, Specification) ->
                             _ ->
                                 DnsAddress
                         end
-                end, undefined, Outputs),
-    log("~p~n", [Mesos]),
+                end, undefined, Outputs).
+
+%% @private
+deploy_to_stack(Identifier, Configuration, Specification) ->
+    DCOS = dcos(Configuration),
+    log("DC/OS: ~p~n", [DCOS]),
 
     %% Write the configuration to a temporary file.
     Filename = "/tmp/configuration.json",
     ok = file:write_file(Filename, Specification),
 
     %% Remove the application first.
+    log("Disabling application: ~p", [Identifier]),
     command("curl -k -H 'Content-type: application/json' \\
                   -X DELETE ~s/service/marathon/v2/apps/~s",
-            [Mesos, Identifier]),
+            [DCOS, Identifier]),
 
     %% Deploy the application.
+    log("Deploying application: ~p", [Identifier]),
     command("curl -k -H 'Content-type: application/json' \\
                   -X POST -d @~s ~s/service/marathon/v2/apps?force=true",
-            [Filename, Mesos]),
+            [Filename, DCOS]),
 
     ok.
