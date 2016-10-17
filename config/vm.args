@@ -1,5 +1,5 @@
 ## Name of the node
--sname nuages
+-name nuages
 
 ## Cookie for distributed erlang
 -setcookie nuages
