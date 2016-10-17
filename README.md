@@ -29,6 +29,6 @@ This command will deploy the task named "lasp" based on the application
 definition provided by the `lasp` module.  This deployment will happen
 in all stacks that are currently provisioned.
 
-# Copyright
+## Copyright
 
 Copyright 2016 Christopher S. Meiklejohn
