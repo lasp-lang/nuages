@@ -9,7 +9,8 @@
                   crypto,
                   sasl,
                   lager,
-                  os_mon
+                  os_mon,
+                  jsx
                  ]},
   {mod, {nuages_app, []}},
   {modules, []}
