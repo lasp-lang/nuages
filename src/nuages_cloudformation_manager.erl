@@ -45,8 +45,8 @@
 -define(REFRESH_INTERVAL, 100).
 -define(REFRESH_MESSAGE, refresh).
 
--record(state, {running}).
 -record(deployment, {region, configuration}).
+-record(state, {stacks}).
 
 %%%===================================================================
 %%% API
@@ -77,15 +77,15 @@ deploy(Identifier, Application) ->
 -spec init([]) -> {ok, #state{}}.
 init([]) ->
     schedule_refresh(),
-    Running = dict:new(),
-    {ok, #state{running=Running}}.
+    Stacks = dict:new(),
+    {ok, #state{stacks=Stacks}}.
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}}.
 handle_call({deploy, Identifier, Application},
             _From,
-            #state{running=Running}=State) ->
+            #state{stacks=Stacks}=State) ->
 
     %% Get application specification.
     Specification = Application:specification(Identifier),
@@ -97,7 +97,7 @@ handle_call({deploy, Identifier, Application},
                         deploy_to_stack(Identifier,
                                         Configuration,
                                         EncodedSpec)
-                  end, dict:to_list(Running)),
+                  end, dict:to_list(Stacks)),
 
     {reply, ok, State};
 
@@ -129,14 +129,14 @@ handle_call({provision, StackName, Region},
 
 handle_call({deprovision, StackName, Region},
             _From,
-            #state{running=Running0}=State) ->
+            #state{stacks=Stacks0}=State) ->
 
     command("aws --region ~p cloudformation delete-stack -stack-name ~s",
             [Region, StackName]),
 
-    Running = dict:erase(StackName, Running0),
+    Stacks = dict:erase(StackName, Stacks0),
 
-    {reply, ok, State#state{running=Running}};
+    {reply, ok, State#state{stacks=Stacks0}};
 
 handle_call(Msg, _From, State) ->
     lager:warning("Unhandled messages: ~p", [Msg]),
@@ -155,24 +155,24 @@ handle_info(?REFRESH_MESSAGE, State) ->
     {noreply, State};
 
 handle_info({event, StackName, Region, 'stack-create-complete'=Event},
-            #state{running=Running0}=State) ->
+            #state{stacks=Stacks0}=State) ->
     log("Event ~p received for ~p~n", [Event, StackName]),
 
     Output = command("aws --region ~p cloudformation describe-stacks --stack-name ~p",
                      [Region, StackName]),
 
-    Running = try
+    Stacks = try
                 Configuration = jsx:decode(list_to_binary(Output), [return_maps]),
                 dict:store(StackName,
                            #deployment{region=Region,
                                        configuration=Configuration},
-                           Running0)
+                           Stacks0)
               catch
                   _:_ ->
-                      Running0
+                      Stacks0
               end,
 
-    {noreply, State#state{running=Running}};
+    {noreply, State#state{stacks=Stacks}};
 
 handle_info(Msg, State) ->
     lager:warning("Unhandled messages: ~p", [Msg]),
