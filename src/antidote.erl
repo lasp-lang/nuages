@@ -28,7 +28,7 @@
 specification(Identifier) ->
     Cpu = 1,
     Memory = 1024,
-    NumInstances = 1,
+    NumInstances = 2,
     DockerImage = "cmeiklejohn/antidote-mesos",
     NumPorts = 4,
 
