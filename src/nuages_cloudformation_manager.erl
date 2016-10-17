@@ -27,7 +27,7 @@
 -export([start_link/0,
          provision/2,
          deprovision/2,
-         deploy/1]).
+         deploy/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -45,7 +45,7 @@
 -define(REFRESH_INTERVAL, 100).
 -define(REFRESH_MESSAGE, refresh).
 
--record(state, {running, launched}).
+-record(state, {running}).
 -record(deployment, {region, configuration}).
 
 %%%===================================================================
@@ -66,8 +66,8 @@ deprovision(StackName, Region) ->
     gen_server:call(?MODULE, {deprovision, StackName, Region}, infinity).
 
 %% @doc Deploy an application.
-deploy(Application) ->
-    gen_server:call(?MODULE, {deploy, Application}, infinity).
+deploy(Identifier, Application) ->
+    gen_server:call(?MODULE, {deploy, Identifier, Application}, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -77,35 +77,33 @@ deploy(Application) ->
 -spec init([]) -> {ok, #state{}}.
 init([]) ->
     schedule_refresh(),
-
     Running = dict:new(),
-    Launched = [],
-
-    {ok, #state{running=Running, launched=Launched}}.
+    {ok, #state{running=Running}}.
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}}.
-handle_call({deploy, _Application},
+handle_call({deploy, Identifier, Application},
             _From,
             #state{running=Running}=State) ->
 
     %% Get application specification.
-    {Identifier, Specification} = application_specification(lasp),
+    Specification = Application:specification(Identifier),
     EncodedSpec = jsx:encode(Specification),
 
-    log(EncodedSpec, []),
+    log("Specification: ~p~n", [EncodedSpec]),
 
-    %% Execute deployment code.
-    lists:foreach(fun({_StackName, #deployment{configuration=Configuration}}) ->
-                        deploy_to_stack(Identifier, Configuration, EncodedSpec)
+    lists:foreach(fun({_, #deployment{configuration=Configuration}}) ->
+                        deploy_to_stack(Identifier,
+                                        Configuration,
+                                        EncodedSpec)
                   end, dict:to_list(Running)),
 
     {reply, ok, State};
 
 handle_call({provision, StackName, Region},
             _From,
-            #state{launched=Launched}=State) ->
+            State) ->
     TemplateBody = template(Region),
     KeyName = ?DEFAULT_KEY_NAME,
     Capabilities = ?DEFAULT_CAPABILITIES,
@@ -127,19 +125,18 @@ handle_call({provision, StackName, Region},
     %% Wait for cluster to be completed.
     wait(StackName, Region, 'stack-create-complete'),
 
-    {reply, ok, State#state{launched=Launched ++ [StackName]}};
+    {reply, ok, State};
 
 handle_call({deprovision, StackName, Region},
             _From,
-            #state{running=Running0, launched=Launched0}=State) ->
+            #state{running=Running0}=State) ->
 
     command("aws --region ~p cloudformation delete-stack -stack-name ~s",
             [Region, StackName]),
 
     Running = dict:erase(StackName, Running0),
-    Launched = lists:delete(StackName, Launched0),
 
-    {reply, ok, State#state{running=Running, launched=Launched}};
+    {reply, ok, State#state{running=Running}};
 
 handle_call(Msg, _From, State) ->
     lager:warning("Unhandled messages: ~p", [Msg]),
@@ -242,109 +239,7 @@ wait(StackName, Region, Event) ->
 
 %% @private
 log(Message, Args) ->
-    io:format(Message, Args).
-
-%% @private
-application_specification(lasp) ->
-    Identifier = "lasp",
-    Cpu = 1,
-    Memory = 1024,
-    NumInstances = 1,
-    DockerImage = "cmeiklejohn/lasp-dev",
-    NumPorts = 2,
-
-    Environment = #{
-        wrap("LASP_BRANCH") => env_wrap("$LASP_BRANCH"),
-        wrap("AD_COUNTER_SIM_SERVER") => env_wrap("true"),
-        wrap("DCOS") => env_wrap("$DCOS"),
-        wrap("TOKEN") => env_wrap("$TOKEN"),
-        wrap("PEER_SERVICE") => env_wrap("$PEER_SERVICE"),
-        wrap("MODE") => env_wrap("$MODE"),
-        wrap("BROADCAST") => env_wrap("$BROADCAST"),
-        wrap("SIMULATION") => env_wrap("$SIMULATION"),
-        wrap("EVAL_ID") => env_wrap("$EVAL_ID"),
-        wrap("EVAL_TIMESTAMP") => env_wrap("$EVAL_TIMESTAMP"),
-        wrap("CLIENT_NUMBER") => env_wrap("$CLIENT_NUMBER"),
-        wrap("HEAVY_CLIENTS") => env_wrap("$HEAVY_CLIENTS"),
-        wrap("REACTIVE_SERVER") => env_wrap("$REACTIVE_SERVER"),
-        wrap("PARTITION_PROBABILITY") => env_wrap("$PARTITION_PROBABILITY"),
-        wrap("IMPRESSION_VELOCITY") => env_wrap("$IMPRESSION_VELOCITY"),
-        wrap("AAE_INTERVAL") => env_wrap("$AAE_INTERVAL"),
-        wrap("DELTA_INTERVAL") => env_wrap("$DELTA_INTERVAL"),
-        wrap("INSTRUMENTATION") => env_wrap("$INSTRUMENTATION"),
-        wrap("LOGS") => env_wrap("$LOGS"),
-        wrap("EXTENDED_LOGGING") => env_wrap("$EXTENDED_LOGGING"),
-        wrap("MAILBOX_LOGGING") => env_wrap("$MAILBOX_LOGGING"),
-        wrap("AWS_ACCESS_KEY_ID") => env_wrap("$AWS_ACCESS_KEY_ID"),
-        wrap("AWS_SECRET_ACCESS_KEY") => env_wrap("$AWS_SECRET_ACCESS_KEY")
-    },
-
-    Labels = #{
-        wrap("HAPROXY_GROUP") => wrap("external"),
-        wrap("HAPROXY_0_VHOST") => env_wrap("$ELB_HOST")
-    },
-
-    {Identifier,
-     specification(Identifier,
-                   Cpu,
-                   Memory,
-                   NumInstances,
-                   DockerImage,
-                   NumPorts,
-                   Environment,
-                   Labels)}.
-
-%% @private
-specification(Identifier,
-              Cpu,
-              Memory,
-              NumInstances,
-              DockerImage,
-              NumPorts,
-              Environment,
-              Labels) ->
-    #{
-        wrap("acceptedResourceRoles") => [wrap("slave_public")],
-        wrap("id") => wrap(Identifier),
-        wrap("dependencies") => [],
-        wrap("cpus") => Cpu,
-        wrap("mem") => Memory,
-        wrap("instances") => NumInstances,
-        wrap("container") => #{
-          wrap("type") => wrap("DOCKER"),
-          wrap("docker") => #{
-            wrap("image") => wrap(DockerImage),
-            wrap("network") => wrap("HOST"),
-            wrap("forcePullImage") => true,
-            wrap("parameters") => [
-              #{ wrap("key") => wrap("oom-kill-disable"),
-                 wrap("value") => wrap("true") }
-            ]
-           }
-        },
-        wrap("ports") => ports(NumPorts),
-        wrap("env") => Environment,
-        wrap("labels") => Labels,
-        wrap("healthChecks") => [
-           #{
-            wrap("path") => wrap("/api/health"),
-            wrap("portIndex") => 0,
-            wrap("protocol") => wrap("HTTP"),
-            wrap("gracePeriodSeconds") => 300,
-            wrap("intervalSeconds") => 60,
-            wrap("timeoutSeconds") => 20,
-            wrap("maxConsecutiveFailures") => 3,
-            wrap("ignoreHttp1xx") => false
-          }]
-    }.
-
-%% @private
-ports(NumPorts) ->
-    lists:map(fun(_) -> 0 end, lists:seq(1, NumPorts)).
-
-%% @private
-wrap(Term) ->
-    list_to_binary(Term).
+    lager:info(Message, Args).
 
 %% @private
 deploy_to_stack(Identifier, Configuration, Specification) ->
@@ -378,13 +273,3 @@ deploy_to_stack(Identifier, Configuration, Specification) ->
             [Filename, Mesos]),
 
     ok.
-
-%% @private
-env_wrap(Term) ->
-    V = case os:getenv(Term) of
-        false ->
-            "false";
-        Value ->
-            Value
-    end,
-    list_to_binary(V).
