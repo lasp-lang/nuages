@@ -45,8 +45,8 @@
 -define(REFRESH_INTERVAL, 100).
 -define(REFRESH_MESSAGE, refresh).
 
--record(deployment, {region, configuration}).
 -record(state, {stacks}).
+-record(deployment, {region, configuration, applications}).
 
 %%%===================================================================
 %%% API
@@ -85,7 +85,7 @@ init([]) ->
     {reply, term(), #state{}}.
 handle_call({deploy, Identifier, Application},
             _From,
-            #state{stacks=Stacks}=State) ->
+            #state{stacks=Stacks0}=State) ->
 
     %% Get application specification.
     Specification = Application:specification(Identifier),
@@ -93,13 +93,22 @@ handle_call({deploy, Identifier, Application},
 
     log("Specification: ~p~n", [EncodedSpec]),
 
-    lists:foreach(fun({_, #deployment{configuration=Configuration}}) ->
-                        deploy_to_stack(Identifier,
-                                        Configuration,
-                                        EncodedSpec)
-                  end, dict:to_list(Stacks)),
+    FoldFun = fun(StackName,
+                  #deployment{configuration=Configuration, applications=Applications0} = Deployment,
+                  Stacks1) ->
+                    deploy_to_stack(Identifier,
+                                    Configuration,
+                                    EncodedSpec),
+                    Applications = Applications0 ++ [Identifier],
+                    lager:info("Stack ~p now has applications: ~p",
+                               [StackName, Applications]),
+                    dict:store(StackName,
+                               Deployment#deployment{applications=Applications},
+                               Stacks1)
+              end,
+    Stacks = dict:fold(FoldFun, Stacks0, Stacks0),
 
-    {reply, ok, State};
+    {reply, ok, State#state{stacks=Stacks}};
 
 handle_call({provision, StackName, Region},
             _From,
@@ -136,7 +145,7 @@ handle_call({deprovision, StackName, Region},
 
     Stacks = dict:erase(StackName, Stacks0),
 
-    {reply, ok, State#state{stacks=Stacks0}};
+    {reply, ok, State#state{stacks=Stacks}};
 
 handle_call(Msg, _From, State) ->
     lager:warning("Unhandled messages: ~p", [Msg]),
@@ -165,7 +174,8 @@ handle_info({event, StackName, Region, 'stack-create-complete'=Event},
                 Configuration = jsx:decode(list_to_binary(Output), [return_maps]),
                 dict:store(StackName,
                            #deployment{region=Region,
-                                       configuration=Configuration},
+                                       configuration=Configuration,
+                                       applications=[]},
                            Stacks0)
               catch
                   _:_ ->
