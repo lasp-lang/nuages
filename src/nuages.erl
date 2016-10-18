@@ -29,6 +29,9 @@
          deprovision/2,
          deploy/2]).
 
+%% Test functions.
+-export([launch_antidote/0]).
+
 -define(MANAGER, nuages_cloudformation_manager).
 
 %% @doc Start the application.
@@ -54,3 +57,12 @@ deprovision(StackName, Region) ->
 %% @doc Deploy an application.
 deploy(Identifier, Application) ->
     ?MANAGER:deploy(Identifier, Application).
+
+%%%===================================================================
+%%% Test functions
+%%%===================================================================
+
+%% @private
+launch_antidote() ->
+    ok = nuages:provision('dcos', 'us-west-2'),
+    ok = nuages:deploy("antidote", antidote).
