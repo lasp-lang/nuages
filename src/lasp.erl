@@ -30,7 +30,7 @@ specification(Identifier) ->
     Memory = 1024,
     NumInstances = 1,
     DockerImage = "cmeiklejohn/lasp-dev",
-    NumPorts = 2,
+    Ports = [0, 0],
 
     Constraints = [],
 
@@ -71,7 +71,7 @@ specification(Identifier) ->
                                                          NumInstances,
                                                          Constraints,
                                                          DockerImage,
-                                                         NumPorts,
+                                                         Ports,
                                                          Environment,
                                                          Labels),
 

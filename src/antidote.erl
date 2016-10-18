@@ -30,7 +30,7 @@ specification(Identifier) ->
     Memory = 1024,
     NumInstances = 2,
     DockerImage = "cmeiklejohn/antidote-mesos",
-    NumPorts = 4,
+    Ports = [4369, 0, 0, 0, 0],
 
     Constraints = [[wrap("hostname"), wrap("UNIQUE")]],
 
@@ -44,7 +44,7 @@ specification(Identifier) ->
                                                          NumInstances,
                                                          Constraints,
                                                          DockerImage,
-                                                         NumPorts,
+                                                         Ports,
                                                          Environment,
                                                          Labels),
 

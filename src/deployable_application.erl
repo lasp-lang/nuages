@@ -25,11 +25,7 @@
 
 -callback specification(id()) -> #{}.
 
--export([ports/1,
-         specification/9]).
-
-ports(NumPorts) ->
-    lists:map(fun(_) -> 0 end, lists:seq(1, NumPorts)).
+-export([specification/9]).
 
 specification(Identifier,
               Cpu,
@@ -37,7 +33,7 @@ specification(Identifier,
               NumInstances,
               Constraints,
               DockerImage,
-              NumPorts,
+              Ports,
               Environment,
               Labels) ->
     #{
@@ -60,7 +56,7 @@ specification(Identifier,
             ]
            }
         },
-        wrap("ports") => ports(NumPorts),
+        wrap("ports") => Ports,
         wrap("env") => Environment,
         wrap("labels") => Labels,
         wrap("healthChecks") => [
