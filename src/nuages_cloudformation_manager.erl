@@ -38,7 +38,7 @@
          code_change/3]).
 
 -define(DEFAULT_CAPABILITIES, "CAPABILITY_IAM").
--define(DEFAULT_PUBLIC_SLAVES, 2).
+-define(DEFAULT_PUBLIC_SLAVES, 3).
 -define(DEFAULT_OAUTH_ENABLED, false).
 -define(DEFAULT_KEY_NAME, dcos).
 
